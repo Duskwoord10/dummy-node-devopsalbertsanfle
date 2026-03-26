@@ -1,0 +1,149 @@
+trigger:
+  branches:
+    include:
+      - main
+
+parameters:
+  - name: sonarScenario
+    displayName: Sonar scenario
+    type: string
+    default: success
+    values:
+      - success
+      - fail
+
+variables:
+  - group: aws-devops-lab
+  - name: IMAGE_REPO
+    value: $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com/$(ECR_REPOSITORY)
+  - name: IMAGE_TAG
+    value: $(Build.BuildId)
+
+stages:
+  - stage: Utilities
+    displayName: Utility scripts
+    jobs:
+      - job: hello_parallel
+        displayName: Hola mundo en paralelo
+        pool:
+          name: $(AZP_POOL)
+        strategy:
+          matrix:
+            h1:  { IDX: "1" }
+            h2:  { IDX: "2" }
+            h3:  { IDX: "3" }
+            h4:  { IDX: "4" }
+            h5:  { IDX: "5" }
+            h6:  { IDX: "6" }
+            h7:  { IDX: "7" }
+            h8:  { IDX: "8" }
+            h9:  { IDX: "9" }
+            h10: { IDX: "10" }
+          maxParallel: 10
+        steps:
+          - bash: |
+              echo "Hola Mundo $(IDX)"
+
+      - job: create_files
+        displayName: Crear 10 archivos con fecha y mostrarlos
+        pool:
+          name: $(AZP_POOL)
+        steps:
+          - bash: |
+              mkdir -p out
+              for i in $(seq 1 10); do
+                file="out/file_${i}_$(date +%Y%m%d_%H%M%S).txt"
+                date > "$file"
+                echo "==== $file ===="
+                cat "$file"
+                sleep 1
+              done
+
+  - stage: Analyze_Build_Push
+    displayName: Sonar + Build + Push
+    dependsOn: Utilities
+    jobs:
+      - job: analyze_build_push
+        displayName: Analyze, build and push
+        pool:
+          name: $(AZP_POOL)
+        steps:
+          - checkout: self
+
+          - task: NodeTool@0
+            inputs:
+              versionSpec: '22.x'
+
+          - bash: |
+              node -v
+              npm ci
+
+          - task: SonarQubePrepare@7
+            inputs:
+              SonarQube: 'sonarqube-local'
+              scannerMode: 'cli'
+              configMode: 'manual'
+              cliProjectKey: 'dummy-node-app'
+              cliProjectName: 'dummy-node-app'
+              cliSources: '.'
+              extraProperties: |
+                sonar.tests=test
+                sonar.test.inclusions=test/**/*.test.js
+                sonar.exclusions=node_modules/**,coverage/**,environment/**
+                sonar.javascript.lcov.reportPaths=coverage/lcov.info
+
+          - bash: |
+              if [ '${{ parameters.sonarScenario }}' = 'success' ]; then
+                npm test -- --coverage
+              else
+                echo "Escenario fail: se omiten tests y coverage"
+              fi
+
+          - task: SonarQubeAnalyze@7
+
+          - task: SonarQubePublish@7
+            inputs:
+              pollingTimeoutSec: '300'
+
+          - bash: |
+              aws ecr describe-repositories --repository-names $(ECR_REPOSITORY) --region $(AWS_REGION) || \
+              aws ecr create-repository --repository-name $(ECR_REPOSITORY) --region $(AWS_REGION)
+
+              aws ecr get-login-password --region $(AWS_REGION) | \
+              sudo docker login --username AWS --password-stdin $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com
+
+              sudo docker build -t $(IMAGE_REPO):$(IMAGE_TAG) .
+              sudo docker tag $(IMAGE_REPO):$(IMAGE_TAG) $(IMAGE_REPO):latest
+              sudo docker push $(IMAGE_REPO):$(IMAGE_TAG)
+              sudo docker push $(IMAGE_REPO):latest
+            env:
+              AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+              AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+
+  - stage: Deploy
+    displayName: Deploy to EKS
+    dependsOn: Analyze_Build_Push
+    condition: succeeded()
+    jobs:
+      - job: deploy_to_eks
+        displayName: Deploy app to EKS
+        pool:
+          name: $(AZP_POOL)
+        steps:
+          - checkout: self
+
+          - bash: |
+              export AWS_ACCESS_KEY_ID=$(AWS_ACCESS_KEY_ID)
+              export AWS_SECRET_ACCESS_KEY=$(AWS_SECRET_ACCESS_KEY)
+
+              aws eks update-kubeconfig --region $(AWS_REGION) --name $(EKS_CLUSTER_NAME)
+
+              sed -i "s|IMAGE_PLACEHOLDER|$(IMAGE_REPO):$(IMAGE_TAG)|g" environment/deployment.yaml
+
+              kubectl apply -f environment/namespace.yaml
+              kubectl apply -f environment/deployment.yaml
+              kubectl apply -f environment/service.yaml
+              kubectl apply -f environment/ingress.yaml
+
+              kubectl get all -n dummy-app
+              kubectl get ingress -n dummy-app
