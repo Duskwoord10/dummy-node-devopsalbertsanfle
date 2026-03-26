@@ -69,6 +69,7 @@ stages:
           name: $(AZP_POOL)
         steps:
           - checkout: self
+            fetchDepth: 0
 
           - task: NodeTool@0
             inputs:
@@ -77,6 +78,7 @@ stages:
           - bash: |
               node -v
               npm ci
+            displayName: Install dependencies
 
           - bash: |
               if [ '${{ parameters.sonarScenario }}' = 'success' ]; then
@@ -84,6 +86,7 @@ stages:
               else
                 echo "Escenario fail: se omiten tests y coverage"
               fi
+            displayName: Run tests
 
           - bash: |
               curl -L -o sonar-scanner.zip https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-7.2.0.5079-linux-x64.zip
@@ -91,15 +94,16 @@ stages:
               export PATH="$PWD/sonar-scanner-7.2.0.5079-linux-x64/bin:$PATH"
 
               sonar-scanner \
-                -Dsonar.projectKey=dummy-node-app \
-                -Dsonar.projectName=dummy-node-app \
+                -Dsonar.projectKey=Examen_Albert_sanfle_Devops_Engineer_Examen_Albert_sanfle_Devops_Engineer_AZ0oLiopvqnCrOrVUaWS \
+                -Dsonar.projectName="Examen Albert sanfle Devops Engineer" \
                 -Dsonar.sources=. \
                 -Dsonar.tests=test \
                 -Dsonar.test.inclusions=test/**/*.test.js \
                 -Dsonar.exclusions=node_modules/**,coverage/**,environment/** \
                 -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info \
                 -Dsonar.host.url=http://23.20.185.8:9000 \
-                -Dsonar.login=$(SONAR_TOKEN)
+                -Dsonar.token=$(SONAR_TOKEN)
+            displayName: Run SonarQube scan
 
           - bash: |
               aws ecr describe-repositories --repository-names $(ECR_REPOSITORY) --region $(AWS_REGION) || \
@@ -112,6 +116,7 @@ stages:
               sudo docker tag $(IMAGE_REPO):$(IMAGE_TAG) $(IMAGE_REPO):latest
               sudo docker push $(IMAGE_REPO):$(IMAGE_TAG)
               sudo docker push $(IMAGE_REPO):latest
+            displayName: Build and push Docker image
             env:
               AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
               AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
@@ -144,3 +149,4 @@ stages:
 
               kubectl get all -n dummy-app
               kubectl get ingress -n dummy-app
+            displayName: Deploy to EKS
