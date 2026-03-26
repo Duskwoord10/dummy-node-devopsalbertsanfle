@@ -99,7 +99,7 @@ stages:
                 -Dsonar.exclusions=node_modules/**,coverage/**,environment/** \
                 -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info \
                 -Dsonar.host.url=http://23.20.185.8:9000 \
-                -Dsonar.token=$(SONAR_TOKEN)
+                -Dsonar.login=$(SONAR_TOKEN)
 
           - bash: |
               aws ecr describe-repositories --repository-names $(ECR_REPOSITORY) --region $(AWS_REGION) || \
