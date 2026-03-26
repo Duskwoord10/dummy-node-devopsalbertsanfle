@@ -72,25 +72,11 @@ stages:
 
           - task: NodeTool@0
             inputs:
-              versionSpec: '22.x'
+              versionSpec: '18.x'
 
           - bash: |
               node -v
               npm ci
-
-          - task: SonarQubePrepare@7
-            inputs:
-              SonarQube: 'sonarqube-local'
-              scannerMode: 'cli'
-              configMode: 'manual'
-              cliProjectKey: 'dummy-node-app'
-              cliProjectName: 'dummy-node-app'
-              cliSources: '.'
-              extraProperties: |
-                sonar.tests=test
-                sonar.test.inclusions=test/**/*.test.js
-                sonar.exclusions=node_modules/**,coverage/**,environment/**
-                sonar.javascript.lcov.reportPaths=coverage/lcov.info
 
           - bash: |
               if [ '${{ parameters.sonarScenario }}' = 'success' ]; then
@@ -99,11 +85,21 @@ stages:
                 echo "Escenario fail: se omiten tests y coverage"
               fi
 
-          - task: SonarQubeAnalyze@7
+          - bash: |
+              curl -L -o sonar-scanner.zip https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-7.2.0.5079-linux-x64.zip
+              unzip -o sonar-scanner.zip
+              export PATH="$PWD/sonar-scanner-7.2.0.5079-linux-x64/bin:$PATH"
 
-          - task: SonarQubePublish@7
-            inputs:
-              pollingTimeoutSec: '300'
+              sonar-scanner \
+                -Dsonar.projectKey=dummy-node-app \
+                -Dsonar.projectName=dummy-node-app \
+                -Dsonar.sources=. \
+                -Dsonar.tests=test \
+                -Dsonar.test.inclusions=test/**/*.test.js \
+                -Dsonar.exclusions=node_modules/**,coverage/**,environment/** \
+                -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info \
+                -Dsonar.host.url=http://23.20.185.8:9000 \
+                -Dsonar.token=$(SONAR_TOKEN)
 
           - bash: |
               aws ecr describe-repositories --repository-names $(ECR_REPOSITORY) --region $(AWS_REGION) || \
@@ -138,6 +134,7 @@ stages:
 
               aws eks update-kubeconfig --region $(AWS_REGION) --name $(EKS_CLUSTER_NAME)
 
+              cp environment/deployment.yaml environment/deployment.yaml.bak
               sed -i "s|IMAGE_PLACEHOLDER|$(IMAGE_REPO):$(IMAGE_TAG)|g" environment/deployment.yaml
 
               kubectl apply -f environment/namespace.yaml
